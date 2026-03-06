@@ -1023,7 +1023,7 @@ async function loadData() {
     }
 
     const [hrRows, qRows] = await Promise.all([
-      fetchCSV(CONFIG.HR_CSV_URL, 'HR CSV (SharePoint/OneDrive)'),
+      fetchCSV(CONFIG.HR_CSV_URL, 'HR CSV (Google Sheets)'),
       fetchCSV(CONFIG.QUESTIONNAIRE_URL, 'Questionnaire (Google Sheets)'),
     ]);
 
