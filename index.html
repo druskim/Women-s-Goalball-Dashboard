@@ -253,9 +253,10 @@
 
     <div class="chart-toggle-bar">
       <span>View:</span>
-      <button class="chart-toggle-btn active" onclick="setChartMode('all', this)">All Weeks</button>
+      <button class="chart-toggle-btn" onclick="setChartMode('all', this)">All Weeks</button>
       <button class="chart-toggle-btn" onclick="setChartMode('month', this)">Last 4 Weeks</button>
-      <button class="chart-toggle-btn" onclick="setChartMode('week', this)">This Week</button>
+      <button class="chart-toggle-btn" onclick="setChartMode('prevweek', this)">Prev Week</button>
+      <button class="chart-toggle-btn active" onclick="setChartMode('week', this)">This Week</button>
     </div>
 
     <div class="chart-grid-2">
@@ -288,10 +289,12 @@
       <div class="chart-card">
         <h3>Session Type Breakdown</h3>
         <canvas id="chart-types"></canvas>
+        <p id="chart-types-empty" class="empty-state" style="display:none">No session data</p>
       </div>
       <div class="chart-card">
         <h3>Wellbeing (Latest Week)</h3>
         <canvas id="chart-radar"></canvas>
+        <p id="chart-radar-empty" class="empty-state" style="display:none">No wellbeing data</p>
       </div>
     </div>
 
@@ -346,14 +349,15 @@ const MONTH_MAP = {
 };
 
 const WB_KEYS = ['stress','enjoyment','sleep','eating','timeManagement','mood','motivation','confidence','mentalHealth','mentalPerformance'];
-const WB_LABELS = ['Stress*','Enjoyment','Sleep','Eating','Time Mgmt','Mood','Motivation','Confidence','Mental Health','Mental Perf'];
+const WB_LABELS = ['Stress','Enjoyment','Sleep','Eating','Time Mgmt','Mood','Motivation','Confidence','Mental Health','Mental Perf'];
 const WB_COLORS = ['#e74c3c','#2ecc71','#3498db','#9b59b6','#e67e22','#f1c40f','#1abc9c','#e91e63','#795548','#607d8b'];
 
 function getMondayOfWeek(dateInput) {
+  // Weeks run Monday to Sunday
   const d = new Date(dateInput);
   if (isNaN(d)) return null;
   const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
+  const diff = day === 0 ? -6 : 1 - day; // Sunday rolls back 6, others roll back to Monday
   d.setDate(d.getDate() + diff);
   d.setHours(0, 0, 0, 0);
   return d.toISOString().split('T')[0];
@@ -373,6 +377,7 @@ function getWeekKeyFromQ(month, dayStr) {
   const now = new Date();
   let year = now.getFullYear();
   if (m > now.getMonth() + 2) year--;
+  // Questionnaire reports the Monday — that is the week start
   return new Date(year, m, day).toISOString().split('T')[0];
 }
 
@@ -814,6 +819,20 @@ let _hrWeekData = [];
 
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
+function showChartEmpty(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  const empty  = document.getElementById(canvasId + '-empty');
+  if (canvas) canvas.style.display = 'none';
+  if (empty)  empty.style.display  = 'block';
+}
+
+function showChart(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  const empty  = document.getElementById(canvasId + '-empty');
+  if (canvas) canvas.style.display = '';
+  if (empty)  empty.style.display  = 'none';
+}
+
 function aggregateZones(data, n) {
   const zones = { grey:0, blue:0, green:0, yellow:0, red:0 };
   for (const w of data.slice(-n)) {
@@ -839,9 +858,17 @@ function setChartMode(mode, btn) {
   document.querySelectorAll('.chart-toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   makeLoadChart(_weekLabels, _hrWeekData, mode);
-  const n = mode === 'all' ? _hrWeekData.length : mode === 'month' ? 4 : 1;
-  const typeMinutes = aggregateTypeMinutes(_hrWeekData, n);
-  if (Object.keys(typeMinutes).length) makeTypeChart(typeMinutes, mode);
+  const typeData = mode === 'all'      ? aggregateTypeMinutes(_hrWeekData, _hrWeekData.length)
+                 : mode === 'month'    ? aggregateTypeMinutes(_hrWeekData, 4)
+                 : mode === 'prevweek' ? aggregateTypeMinutes(_hrWeekData.slice(0, -1), 1)
+                 :                      aggregateTypeMinutes(_hrWeekData, 1);
+  if (Object.keys(typeData).length) {
+    showChart('chart-types');
+    makeTypeChart(typeData, mode === 'prevweek' ? 'week' : mode);
+  } else {
+    destroyChart('types');
+    showChartEmpty('chart-types');
+  }
 }
 
 function makeLoadChart(labels, weekData, mode = 'all') {
@@ -888,11 +915,12 @@ function makeLoadChart(labels, weekData, mode = 'all') {
       },
     });
   } else {
-    // Donut by zone for last 4 weeks or this week
+    // Donut by zone for last 4 weeks, prev week, or this week
     hint.style.display = 'none';
     zoneLegend.style.display = 'none';
-    const n = mode === 'month' ? 4 : 1;
-    const zoneTotals = aggregateZones(weekData, n);
+    const zoneTotals = mode === 'month'    ? aggregateZones(weekData, 4)
+                     : mode === 'prevweek' ? aggregateZones(weekData.slice(0, -1), 1)
+                     :                      aggregateZones(weekData, 1);
     const zones = ['grey','blue','green','yellow','red'];
     const zoneLabels = ['Grey 50–59%','Blue 60–69%','Green 70–79%','Yellow 80–89%','Red 90–100%'];
     charts.load = new Chart(ctx, {
@@ -993,28 +1021,20 @@ function makeTypeChart(typeMinutes, mode = 'all') {
   }
 }
 
-const RADAR_LABELS = ['Calmness (↑ good)','Enjoyment','Sleep','Eating','Time Mgmt','Mood','Motivation','Confidence','Mental Health','Mental Perf'];
-const RADAR_POINT_COLORS = WB_KEYS.map(k => k === 'stress' ? '#e74c3c' : '#22c55e');
-
 function makeRadarChart(wb) {
   destroyChart('radar');
   const ctx = document.getElementById('chart-radar').getContext('2d');
-  // Invert stress so higher always means better on the chart
-  const vals = WB_KEYS.map(k => {
-    const v = wb[k];
-    if (v == null) return null;
-    return k === 'stress' ? (6 - v) : v;
-  });
+  const vals = WB_KEYS.map(k => wb[k] ?? null);
   charts.radar = new Chart(ctx, {
     type: 'radar',
     data: {
-      labels: RADAR_LABELS,
+      labels: WB_LABELS,
       datasets: [{
         label: 'Latest week',
         data: vals,
-        backgroundColor: 'rgba(34,197,94,.1)',
-        borderColor: '#22c55e',
-        pointBackgroundColor: RADAR_POINT_COLORS,
+        backgroundColor: 'rgba(230,57,70,.15)',
+        borderColor: '#e63946',
+        pointBackgroundColor: '#e63946',
         pointRadius: 4,
       }],
     },
@@ -1023,10 +1043,7 @@ function makeRadarChart(wb) {
       scales: {
         r: {
           min: 0, max: 5, ticks: { stepSize: 1, font: { size: 9 }, color: '#6b7280' },
-          pointLabels: {
-            font: { size: 10 },
-            color: (ctx) => ctx.index === 0 ? '#e74c3c' : '#22c55e',
-          },
+          pointLabels: { font: { size: 10 } },
         },
       },
       plugins: { legend: { display: false } },
@@ -1043,11 +1060,7 @@ function makeWBTrendChart(labels, wbByWeek) {
       labels,
       datasets: WB_KEYS.map((k, i) => ({
         label: WB_LABELS[i],
-        data: wbByWeek.map(wb => {
-          const v = wb?.[k];
-          if (v == null) return null;
-          return k === 'stress' ? (6 - v) : v;
-        }),
+        data: wbByWeek.map(wb => wb?.[k] ?? null),
         borderColor: WB_COLORS[i],
         backgroundColor: 'transparent',
         pointRadius: 3,
@@ -1073,7 +1086,7 @@ function makeWBTrendChart(labels, wbByWeek) {
             data-idx="${i}"
             style="border-color:${WB_COLORS[i]};color:${WB_COLORS[i]}"
             onclick="toggleWBMetric(this, ${i})">
-      ${k === 'stress' ? 'Calmness' : WB_LABELS[i]}
+      ${WB_LABELS[i]}
     </button>`).join('');
 }
 
@@ -1135,31 +1148,31 @@ function renderIndividual(an) {
   // Store for toggle re-renders
   _weekLabels = weekLabels;
   _hrWeekData = hrWeekData;
-  chartMode = 'all';
-  document.querySelectorAll('.chart-toggle-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
+  chartMode = 'week';
+  document.querySelectorAll('.chart-toggle-btn').forEach((b, i) => b.classList.toggle('active', i === 3));
 
-  makeLoadChart(weekLabels, hrWeekData, 'all');
+  makeLoadChart(weekLabels, hrWeekData, 'week');
 
   // ACWR chart
   makeACWRChart(weekLabels, acwrData);
 
-  // Session type — all weeks aggregate
-  const typeMinutes = aggregateTypeMinutes(hrWeekData, hrWeekData.length);
+  // Session type — default this week
+  const typeMinutes = aggregateTypeMinutes(hrWeekData, 1);
   if (Object.keys(typeMinutes).length) {
-    makeTypeChart(typeMinutes, 'all');
+    showChart('chart-types');
+    makeTypeChart(typeMinutes, 'week');
   } else {
     destroyChart('types');
-    document.getElementById('chart-types').parentElement.innerHTML =
-      '<h3>Session Type Breakdown</h3><p class="empty-state">No session data</p>';
+    showChartEmpty('chart-types');
   }
 
   // Wellbeing radar (latest)
   if (latestQ?.wellbeing && WB_KEYS.some(k => latestQ.wellbeing[k] != null)) {
+    showChart('chart-radar');
     makeRadarChart(latestQ.wellbeing);
   } else {
     destroyChart('radar');
-    document.getElementById('chart-radar').parentElement.innerHTML =
-      '<h3>Wellbeing (Latest Week)</h3><p class="empty-state">No wellbeing data</p>';
+    showChartEmpty('chart-radar');
   }
 
   // Wellbeing trend
