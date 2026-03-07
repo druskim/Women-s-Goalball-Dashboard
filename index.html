@@ -157,6 +157,15 @@
                     color: #8b0000; padding: 12px 20px; border-radius: 6px;
                     margin-bottom: 20px; font-size: 13px; }
 
+    /* CHART TOGGLE BAR */
+    .chart-toggle-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; }
+    .chart-toggle-bar span { font-size: 12px; color: var(--muted); margin-right: 4px; }
+    .chart-toggle-btn { padding: 5px 14px; border: 1px solid var(--border); background: transparent;
+                        color: var(--muted); border-radius: 20px; cursor: pointer; font-size: 12px;
+                        font-weight: 500; transition: all .15s; }
+    .chart-toggle-btn:hover:not(.active) { border-color: var(--text); color: var(--text); }
+    .chart-toggle-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+
     /* WELLBEING FILTER CHIPS */
     .wb-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
     .wb-chip { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
@@ -242,9 +251,16 @@
 
     <div class="stats-row" id="ind-stats"></div>
 
+    <div class="chart-toggle-bar">
+      <span>View:</span>
+      <button class="chart-toggle-btn active" onclick="setChartMode('all', this)">All Weeks</button>
+      <button class="chart-toggle-btn" onclick="setChartMode('month', this)">Last 4 Weeks</button>
+      <button class="chart-toggle-btn" onclick="setChartMode('week', this)">This Week</button>
+    </div>
+
     <div class="chart-grid-2">
       <div class="chart-card">
-        <h3>Weekly Training Load (MEPs) <span style="font-weight:400;font-size:11px;color:var(--muted)">— click a bar to see hours</span></h3>
+        <h3>Weekly Training Load (MEPs) <span id="load-chart-hint" style="font-weight:400;font-size:11px;color:var(--muted)">— click a bar to see hours</span></h3>
         <canvas id="chart-load" style="cursor:pointer"></canvas>
         <div id="load-week-info" style="display:none;margin-top:10px;padding:10px 14px;background:#13161f;border-radius:6px;border-left:3px solid var(--red)">
           <span id="load-week-label" style="font-weight:600;font-size:13px"></span>
@@ -253,7 +269,7 @@
           <span style="color:var(--muted);font-size:13px"> &nbsp;·&nbsp; </span>
           <span id="load-week-meps" style="font-size:13px;color:var(--muted)"></span>
         </div>
-        <div class="zone-legend">
+        <div class="zone-legend" id="zone-legend">
           <div class="zone-item"><div class="zone-dot zone-grey"></div>Grey 50–59%</div>
           <div class="zone-item"><div class="zone-dot zone-blue"></div>Blue 60–69%</div>
           <div class="zone-item"><div class="zone-dot zone-green"></div>Green 70–79%</div>
@@ -638,13 +654,22 @@ function processQuestionnaire(rows) {
 
 function calcACWR(hrWeeks, weekKey) {
   const acute = hrWeeks[weekKey]?.meps || 0;
-  let chronicSum = 0;
+
+  // Weighted chronic: more recent weeks weighted higher, zero weeks excluded
+  const weights = [4, 3, 2, 1]; // index 0 = last week, index 3 = 4 weeks ago
+  let weightedSum = 0;
+  let totalWeight = 0;
   for (let w = 1; w <= 4; w++) {
     const key = addWeeks(weekKey, -w);
-    chronicSum += hrWeeks[key]?.meps || 0;
+    const meps = hrWeeks[key]?.meps || 0;
+    if (meps === 0) continue; // skip missing/zero weeks
+    const weight = weights[w - 1];
+    weightedSum += meps * weight;
+    totalWeight += weight;
   }
-  const chronic = chronicSum / 4;
-  if (chronic === 0) return null;
+
+  if (totalWeight === 0) return null;
+  const chronic = weightedSum / totalWeight;
   return acute / chronic;
 }
 
@@ -783,45 +808,105 @@ function openAthlete(an) {
 // ============================================================
 
 let charts = {};
+let chartMode = 'all';
+let _weekLabels = [];
+let _hrWeekData = [];
 
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
-function makeLoadChart(labels, weekData) {
+function aggregateZones(data, n) {
+  const zones = { grey:0, blue:0, green:0, yellow:0, red:0 };
+  for (const w of data.slice(-n)) {
+    if (!w) continue;
+    for (const z of Object.keys(zones)) zones[z] += w.mepsByZone?.[z] || 0;
+  }
+  return zones;
+}
+
+function aggregateTypeMinutes(data, n) {
+  const result = {};
+  for (const w of data.slice(-n)) {
+    if (!w) continue;
+    for (const [type, mins] of Object.entries(w.minutesByType || {})) {
+      result[type] = (result[type] || 0) + mins;
+    }
+  }
+  return result;
+}
+
+function setChartMode(mode, btn) {
+  chartMode = mode;
+  document.querySelectorAll('.chart-toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  makeLoadChart(_weekLabels, _hrWeekData, mode);
+  const n = mode === 'all' ? _hrWeekData.length : mode === 'month' ? 4 : 1;
+  const typeMinutes = aggregateTypeMinutes(_hrWeekData, n);
+  if (Object.keys(typeMinutes).length) makeTypeChart(typeMinutes, mode);
+}
+
+function makeLoadChart(labels, weekData, mode = 'all') {
   destroyChart('load');
   document.getElementById('load-week-info').style.display = 'none';
   const ctx = document.getElementById('chart-load').getContext('2d');
-  const zones = ['grey','blue','green','yellow','red'];
-  charts.load = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: zones.map(z => ({
-        label: z.charAt(0).toUpperCase() + z.slice(1),
-        data: weekData.map(w => w?.mepsByZone?.[z] || 0),
-        backgroundColor: ZONE_COLORS[z],
-        stack: 'meps',
-      })),
-    },
-    options: {
-      responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { stacked: true, grid: { display: false } },
-        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'MEPs' } },
+  const zoneLegend = document.getElementById('zone-legend');
+  const hint = document.getElementById('load-chart-hint');
+
+  if (mode === 'all') {
+    // Stacked bar by zone over all weeks
+    hint.style.display = '';
+    zoneLegend.style.display = 'flex';
+    const zones = ['grey','blue','green','yellow','red'];
+    charts.load = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: zones.map(z => ({
+          label: z.charAt(0).toUpperCase() + z.slice(1),
+          data: weekData.map(w => w?.mepsByZone?.[z] || 0),
+          backgroundColor: ZONE_COLORS[z],
+          stack: 'meps',
+        })),
       },
-      onClick: (event, elements) => {
-        if (!elements.length) return;
-        const i = elements[0].index;
-        const w = weekData[i];
-        const hrs = w?.minutes ? (w.minutes / 60).toFixed(1) : '0';
-        const meps = w?.meps ? w.meps.toLocaleString() : '0';
-        document.getElementById('load-week-label').textContent = labels[i];
-        document.getElementById('load-week-hours').textContent = `${hrs} hrs trained`;
-        document.getElementById('load-week-meps').textContent = `${meps} MEPs`;
-        document.getElementById('load-week-info').style.display = 'block';
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, beginAtZero: true, title: { display: true, text: 'MEPs' } },
+        },
+        onClick: (event, elements) => {
+          if (!elements.length) return;
+          const i = elements[0].index;
+          const w = weekData[i];
+          const hrs = w?.minutes ? (w.minutes / 60).toFixed(1) : '0';
+          const meps = w?.meps ? w.meps.toLocaleString() : '0';
+          document.getElementById('load-week-label').textContent = labels[i];
+          document.getElementById('load-week-hours').textContent = `${hrs} hrs trained`;
+          document.getElementById('load-week-meps').textContent = `${meps} MEPs`;
+          document.getElementById('load-week-info').style.display = 'block';
+        },
       },
-    },
-  });
+    });
+  } else {
+    // Donut by zone for last 4 weeks or this week
+    hint.style.display = 'none';
+    zoneLegend.style.display = 'none';
+    const n = mode === 'month' ? 4 : 1;
+    const zoneTotals = aggregateZones(weekData, n);
+    const zones = ['grey','blue','green','yellow','red'];
+    const zoneLabels = ['Grey 50–59%','Blue 60–69%','Green 70–79%','Yellow 80–89%','Red 90–100%'];
+    charts.load = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: zoneLabels,
+        datasets: [{ data: zones.map(z => zoneTotals[z]), backgroundColor: zones.map(z => ZONE_COLORS[z]), borderWidth: 1 }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12 } } },
+      },
+    });
+  }
 }
 
 function makeACWRChart(labels, acwrVals) {
@@ -860,32 +945,52 @@ function makeACWRChart(labels, acwrVals) {
   });
 }
 
-function makeTypeChart(typeMinutes) {
+function makeTypeChart(typeMinutes, mode = 'all') {
   destroyChart('types');
   const ctx = document.getElementById('chart-types').getContext('2d');
   const entries = Object.entries(typeMinutes).sort((a,b) => b[1] - a[1]);
   const palette = ['#e63946','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c','#e91e63','#795548','#607d8b'];
-  charts.types = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: entries.map(e => e[0]),
-      datasets: [{
-        label: 'Hours',
-        data: entries.map(e => parseFloat((e[1] / 60).toFixed(2))),
-        backgroundColor: entries.map((_, i) => palette[i % palette.length]),
-        borderRadius: 3,
-      }],
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { beginAtZero: true, title: { display: true, text: 'Hours' } },
-        y: { ticks: { font: { size: 11 } } },
+
+  if (mode === 'all') {
+    // Horizontal bar — all weeks aggregate
+    charts.types = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: entries.map(e => e[0]),
+        datasets: [{
+          label: 'Hours',
+          data: entries.map(e => parseFloat((e[1] / 60).toFixed(2))),
+          backgroundColor: entries.map((_, i) => palette[i % palette.length]),
+          borderRadius: 3,
+        }],
       },
-    },
-  });
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, title: { display: true, text: 'Hours' } },
+          y: { ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  } else {
+    // Donut — last 4 weeks or this week
+    charts.types = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: entries.map(e => e[0]),
+        datasets: [{ data: entries.map(e => parseFloat((e[1] / 60).toFixed(2))), backgroundColor: entries.map((_, i) => palette[i % palette.length]), borderWidth: 1 }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12 } },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.toFixed(1)} hrs` } },
+        },
+      },
+    });
+  }
 }
 
 const RADAR_LABELS = ['Calmness (↑ good)','Enjoyment','Sleep','Eating','Time Mgmt','Mood','Motivation','Confidence','Mental Health','Mental Perf'];
@@ -1027,22 +1132,21 @@ function renderIndividual(an) {
   `;
 
   // Load chart
-  makeLoadChart(weekLabels, hrWeekData);
+  // Store for toggle re-renders
+  _weekLabels = weekLabels;
+  _hrWeekData = hrWeekData;
+  chartMode = 'all';
+  document.querySelectorAll('.chart-toggle-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
+
+  makeLoadChart(weekLabels, hrWeekData, 'all');
 
   // ACWR chart
   makeACWRChart(weekLabels, acwrData);
 
-  // Session type breakdown — aggregate last 4 weeks by hours
-  const typeMinutes = {};
-  for (let w = 0; w < 4; w++) {
-    const wk = addWeeks(a.currentWk, -w);
-    const mbt = a.weeks[wk]?.hr?.minutesByType || {};
-    for (const [type, mins] of Object.entries(mbt)) {
-      typeMinutes[type] = (typeMinutes[type] || 0) + mins;
-    }
-  }
+  // Session type — all weeks aggregate
+  const typeMinutes = aggregateTypeMinutes(hrWeekData, hrWeekData.length);
   if (Object.keys(typeMinutes).length) {
-    makeTypeChart(typeMinutes);
+    makeTypeChart(typeMinutes, 'all');
   } else {
     destroyChart('types');
     document.getElementById('chart-types').parentElement.innerHTML =
