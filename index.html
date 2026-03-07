@@ -3,24 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Diving Canada | Training Dashboard</title>
+  <title>Women's National Team Training Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="config.js"></script>
   <style>
     :root {
-      --red:    #CC0000;
-      --red-dk: #990000;
-      --bg:     #f0f2f5;
-      --card:   #ffffff;
-      --text:   #1e2a38;
-      --muted:  #7a8a9a;
-      --border: #dde3ea;
-      --green:  #1ea868;
-      --yellow: #e0a800;
-      --orange: #e06c00;
-      --danger: #d93025;
-      --blue:   #2272c3;
+      --red:    #e63946;
+      --red-dk: #7a0012;
+      --bg:     #0f1117;
+      --card:   #1a1d27;
+      --text:   #e8eaf0;
+      --muted:  #6b7280;
+      --border: #2a2d3a;
+      --green:  #22c55e;
+      --yellow: #eab308;
+      --orange: #f97316;
+      --danger: #ef4444;
+      --blue:   #3b82f6;
       --z-grey:   #9b9b9b;
       --z-blue:   #3498db;
       --z-green:  #2ecc71;
@@ -57,7 +57,7 @@
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
              gap: 16px; margin-bottom: 24px; }
     .card { background: var(--card); border-radius: 8px; padding: 18px 20px;
-            box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+            box-shadow: 0 1px 4px rgba(0,0,0,.4); }
     .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
                    color: var(--muted); margin-bottom: 6px; }
     .card .value { font-size: 28px; font-weight: 700; line-height: 1; }
@@ -70,12 +70,12 @@
     .table-wrap h2 { padding: 16px 20px 12px; font-size: 15px; border-bottom: 1px solid var(--border); }
     table { width: 100%; border-collapse: collapse; }
     th { text-align: left; padding: 10px 14px; font-size: 11px; text-transform: uppercase;
-         letter-spacing: .5px; color: var(--muted); background: #f8f9fb;
+         letter-spacing: .5px; color: var(--muted); background: #13161f;
          border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; }
-    th:hover { background: #eef0f4; }
+    th:hover { background: #1e2130; }
     td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #f8f9fb; }
+    tr:hover td { background: #1e2130; }
     .athlete-name { font-weight: 600; }
     .no-data { color: var(--muted); font-style: italic; }
 
@@ -97,11 +97,12 @@
     .athlete-selector { margin-bottom: 20px; }
     .athlete-selector select { font-size: 16px; font-weight: 600; padding: 8px 14px;
                                 border: 1px solid var(--border); border-radius: 6px;
-                                background: var(--card); color: var(--text); cursor: pointer; }
+                                background: var(--card); color: var(--text); cursor: pointer;
+                                color-scheme: dark; }
     .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                  gap: 16px; margin-bottom: 24px; }
     .stat-card { background: var(--card); border-radius: 8px; padding: 16px 18px;
-                 box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+                 box-shadow: 0 1px 4px rgba(0,0,0,.4); }
     .stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
                         color: var(--muted); margin-bottom: 4px; }
     .stat-card .value { font-size: 24px; font-weight: 700; }
@@ -132,7 +133,7 @@
 
     /* MISSED WORKOUTS TABLE */
     .missed-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .missed-table th { text-align: left; padding: 8px 10px; background: #f8f9fb;
+    .missed-table th { text-align: left; padding: 8px 10px; background: #13161f;
                        border-bottom: 1px solid var(--border); color: var(--muted);
                        font-size: 11px; text-transform: uppercase; }
     .missed-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
@@ -140,11 +141,11 @@
 
     /* NOTES */
     .notes-text { font-size: 13px; line-height: 1.6; color: var(--text);
-                  background: #f8f9fb; border-radius: 6px; padding: 12px 14px;
+                  background: #13161f; border-radius: 6px; padding: 12px 14px;
                   border-left: 3px solid var(--red); white-space: pre-wrap; }
 
     /* LOADING / ERROR */
-    #loading { position: fixed; inset: 0; background: rgba(255,255,255,.88);
+    #loading { position: fixed; inset: 0; background: rgba(15,17,23,.92);
                display: flex; flex-direction: column; align-items: center; justify-content: center;
                z-index: 100; gap: 14px; }
     #loading .spinner { width: 40px; height: 40px; border: 4px solid #eee;
@@ -186,7 +187,7 @@
 </div>
 
 <header>
-  <h1>Diving Canada &mdash; Training Dashboard</h1>
+  <h1>Women's National Team Training Dashboard</h1>
   <span class="meta" id="last-updated"></span>
   <button onclick="refreshData()">Refresh</button>
 </header>
@@ -286,6 +287,13 @@
 </main>
 
 <script>
+// ============================================================
+//  DARK THEME — Chart.js global defaults
+// ============================================================
+Chart.defaults.color = '#9ca3af';
+Chart.defaults.borderColor = '#2a2d3a';
+Chart.defaults.backgroundColor = 'rgba(255,255,255,0.05)';
+
 // ============================================================
 //  UTILITIES
 // ============================================================
@@ -628,6 +636,7 @@ function buildProfiles() {
 
     const curACWR = weeks[currentWk]?.acwr ?? weeks[latestHRWk]?.acwr ?? null;
     const curMEPs = hrWks[currentWk]?.meps ?? hrWks[latestHRWk]?.meps ?? 0;
+    const curMinutes = hrWks[currentWk]?.minutes ?? hrWks[latestHRWk]?.minutes ?? 0;
     const curSessions = hrWks[currentWk]?.count ?? hrWks[latestHRWk]?.count ?? 0;
     const latestQ = latestQWk ? qWks[latestQWk] : null;
     const hasCurrentReport = !!(qWks[currentWk] || qWks[prevWk]);
@@ -636,7 +645,7 @@ function buildProfiles() {
       an, displayName: capitalize(an),
       weeks, weekList: allWks,
       currentWk, latestQWk, latestHRWk,
-      curACWR, curMEPs, curSessions,
+      curACWR, curMEPs, curMinutes, curSessions,
       latestWB: latestQ?.wellbeing || null,
       latestPart: latestQ?.participation || '',
       hasFlag: latestQ?.hasFlag || false,
@@ -898,8 +907,8 @@ function renderIndividual(an) {
   const partCls = participationClass(a.latestPart);
   document.getElementById('ind-stats').innerHTML = `
     <div class="stat-card">
-      <div class="label">MEPs (current wk)</div>
-      <div class="value">${a.curMEPs > 0 ? a.curMEPs.toLocaleString() : '—'}</div>
+      <div class="label">Training Time (current wk)</div>
+      <div class="value">${a.curMinutes > 0 ? (a.curMinutes / 60).toFixed(1) + ' hrs' : '—'}</div>
       <div class="sub">${a.curSessions} session${a.curSessions !== 1?'s':''}</div>
     </div>
     <div class="stat-card">
