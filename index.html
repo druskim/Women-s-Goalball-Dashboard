@@ -760,6 +760,7 @@ function buildProfiles() {
     const curMinutes = hrWks[currentWk]?.minutes ?? hrWks[latestHRWk]?.minutes ?? 0;
     const curSessions = hrWks[currentWk]?.count ?? hrWks[latestHRWk]?.count ?? 0;
     const latestQ = latestQWk ? qWks[latestQWk] : null;
+    const hasQData = Object.keys(qWks).length > 0;
     const hasCurrentReport = !!(qWks[currentWk] || qWks[prevWk]);
 
     profiles[an] = {
@@ -770,7 +771,7 @@ function buildProfiles() {
       latestWB: latestQ?.wellbeing || null,
       latestPart: latestQ?.participation || '',
       hasFlag: latestQ?.hasFlag || false,
-      hasCurrentReport,
+      hasQData, hasCurrentReport,
     };
   }
   return profiles;
@@ -788,7 +789,7 @@ function renderTeam() {
 
   // Summary cards
   const flagged  = list.filter(a => a.hasFlag).length;
-  const missing  = list.filter(a => !a.hasCurrentReport).length;
+  const missing  = list.filter(a => a.hasQData && !a.hasCurrentReport).length;
   const acwrVals = list.map(a => a.curACWR).filter(v => v != null);
   const avgACWR  = acwrVals.length ? (acwrVals.reduce((a,b)=>a+b,0)/acwrVals.length).toFixed(2) : '—';
 
@@ -829,7 +830,9 @@ function renderTeam() {
     const partShort = participationShort(a.latestPart);
     const reportBadge = a.hasCurrentReport
       ? `<span class="badge badge-green">${fmtDate(a.latestQWk)}</span>`
-      : `<span class="badge badge-red">Missing</span>`;
+      : a.hasQData
+        ? `<span class="badge badge-red">Missing</span>`
+        : `<span class="no-data">—</span>`;
 
     const hrs = a.curMinutes > 0 ? (a.curMinutes / 60).toFixed(1) + ' h' : '<span class="no-data">—</span>';
     return `<tr onclick="openAthlete('${a.an}')" style="cursor:pointer">
