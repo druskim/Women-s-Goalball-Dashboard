@@ -912,13 +912,21 @@ function setChartMode(mode, btn) {
   document.querySelectorAll('.chart-toggle-bar .chart-toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   makeLoadChart(_weekLabels, _hrWeekData, mode);
-  const typeData = mode === 'avg'   ? aggregateTypeMinutes(_hrWeekData, _hrWeekData.length)
-                 : mode === 'month' ? aggregateTypeMinutes(_hrWeekData, 4)
-                 : mode === 'prev'  ? aggregateTypeMinutes(_hrWeekData.slice(0, -1), 1)
-                 :                   aggregateTypeMinutes(_hrWeekData, 1);
+  let typeData, typeMode;
+  if (mode === 'avg') {
+    const weeksWithData = _hrWeekData.filter(w => w && (w.minutes || 0) > 0).length || 1;
+    const raw = aggregateTypeMinutes(_hrWeekData, _hrWeekData.length);
+    typeData = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v / weeksWithData]));
+    typeMode = 'avg';
+  } else {
+    typeData = mode === 'month' ? aggregateTypeMinutes(_hrWeekData, 4)
+             : mode === 'prev'  ? aggregateTypeMinutes(_hrWeekData.slice(0, -1), 1)
+             :                   aggregateTypeMinutes(_hrWeekData, 1);
+    typeMode = 'week';
+  }
   if (Object.keys(typeData).length) {
     showChart('chart-types');
-    makeTypeChart(typeData, mode === 'avg' ? 'all' : 'week');
+    makeTypeChart(typeData, typeMode);
   } else {
     destroyChart('types');
     showChartEmpty('chart-types');
@@ -1053,14 +1061,15 @@ function makeTypeChart(typeMinutes, mode = 'all') {
   const entries = Object.entries(typeMinutes).sort((a,b) => b[1] - a[1]);
   const palette = ['#e63946','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c','#e91e63','#795548','#607d8b'];
 
-  if (mode === 'all') {
-    // Horizontal bar — all weeks aggregate
+  if (mode === 'all' || mode === 'avg') {
+    // Horizontal bar — aggregate or per-week average
+    const axisLabel = mode === 'avg' ? 'Avg hrs / wk' : 'Hours';
     charts.types = new Chart(ctx, {
       type: 'bar',
       data: {
         labels: entries.map(e => e[0]),
         datasets: [{
-          label: 'Hours',
+          label: axisLabel,
           data: entries.map(e => parseFloat((e[1] / 60).toFixed(2))),
           backgroundColor: entries.map((_, i) => palette[i % palette.length]),
           borderRadius: 3,
@@ -1071,7 +1080,7 @@ function makeTypeChart(typeMinutes, mode = 'all') {
         responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          x: { beginAtZero: true, title: { display: true, text: 'Hours' } },
+          x: { beginAtZero: true, title: { display: true, text: axisLabel } },
           y: { ticks: { font: { size: 11 } } },
         },
       },
