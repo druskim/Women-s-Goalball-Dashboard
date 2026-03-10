@@ -503,7 +503,7 @@ function rpeToZone(rpe) {
 
 function calcMissedLoad(missed) {
   if (!missed || !missed.length) return null;
-  const load = { minutes: 0, meps: 0, mepsByZone: {grey:0,blue:0,green:0,yellow:0,red:0} };
+  const load = { minutes: 0, meps: 0, mepsByZone: {grey:0,blue:0,green:0,yellow:0,red:0}, minutesByType: {} };
   for (const m of missed) {
     const mins = (m.duration || 0) * 60;
     if (mins <= 0) continue;
@@ -511,6 +511,9 @@ function calcMissedLoad(missed) {
     load.minutes += mins;
     load.meps    += mins * ZONE_MEPS[zone];
     load.mepsByZone[zone] += mins * ZONE_MEPS[zone];
+    if (m.type) {
+      load.minutesByType[m.type] = (load.minutesByType[m.type] || 0) + mins;
+    }
   }
   return load.minutes > 0 ? load : null;
 }
@@ -519,6 +522,10 @@ function mergeWithMissed(hr, missedLoad) {
   if (!missedLoad) return hr;
   const base = hr || { meps:0, mepsByZone:{grey:0,blue:0,green:0,yellow:0,red:0},
                        sessionTypes:[], minutesByType:{}, count:0, minutes:0 };
+  const mergedTypes = { ...base.minutesByType };
+  for (const [type, mins] of Object.entries(missedLoad.minutesByType || {})) {
+    mergedTypes[type] = (mergedTypes[type] || 0) + mins;
+  }
   return {
     ...base,
     minutes:    base.minutes + missedLoad.minutes,
@@ -530,6 +537,7 @@ function mergeWithMissed(hr, missedLoad) {
       yellow: (base.mepsByZone?.yellow || 0) + missedLoad.mepsByZone.yellow,
       red:    (base.mepsByZone?.red    || 0) + missedLoad.mepsByZone.red,
     },
+    minutesByType: mergedTypes,
     hasMissed: true,
   };
 }
@@ -758,7 +766,8 @@ function buildProfiles() {
 
     const curACWR = weeks[currentWk]?.acwr ?? weeks[latestHRWk]?.acwr ?? null;
     const curMEPs = hrWks[currentWk]?.meps ?? hrWks[latestHRWk]?.meps ?? 0;
-    const curMinutes = hrWks[currentWk]?.minutes ?? hrWks[latestHRWk]?.minutes ?? 0;
+    const curMissedLoad = calcMissedLoad(qWks[currentWk]?.missed || []);
+    const curMinutes = (hrWks[currentWk]?.minutes ?? hrWks[latestHRWk]?.minutes ?? 0) + (curMissedLoad?.minutes || 0);
     const curSessions = hrWks[currentWk]?.count ?? hrWks[latestHRWk]?.count ?? 0;
     const latestQ = latestQWk ? qWks[latestQWk] : null;
     const hasQData = Object.keys(qWks).length > 0;
