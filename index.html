@@ -756,9 +756,16 @@ function buildProfiles() {
 
     const allWks = Array.from(new Set([...Object.keys(hrWks), ...Object.keys(qWks)])).sort();
 
+    // Merge HR meps with missed workout meps so ACWR reflects total load
+    const mergedMepsByWk = {};
+    for (const wk of allWks) {
+      const missedMeps = calcMissedLoad(qWks[wk]?.missed || [])?.meps || 0;
+      mergedMepsByWk[wk] = { meps: (hrWks[wk]?.meps || 0) + missedMeps };
+    }
+
     const weeks = {};
     for (const wk of allWks) {
-      weeks[wk] = { hr: hrWks[wk] || null, q: qWks[wk] || null, acwr: calcACWR(hrWks, wk) };
+      weeks[wk] = { hr: hrWks[wk] || null, q: qWks[wk] || null, acwr: calcACWR(mergedMepsByWk, wk) };
     }
 
     const latestQWk = Object.keys(qWks).sort().pop() || null;
