@@ -195,9 +195,45 @@
 
     /* ACWR reference line label */
     .acwr-ref { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+    /* INJURY MODAL */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65);
+                     z-index: 200; align-items: center; justify-content: center; padding: 24px; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: var(--card); border-radius: 10px; width: 100%; max-width: 640px;
+                 max-height: 80vh; display: flex; flex-direction: column;
+                 box-shadow: 0 8px 32px rgba(0,0,0,.6); }
+    .modal-header { display: flex; align-items: center; justify-content: space-between;
+                    padding: 18px 22px 14px; border-bottom: 1px solid var(--border); }
+    .modal-header h2 { font-size: 16px; font-weight: 700; }
+    .modal-header .modal-close { background: none; border: none; color: var(--muted);
+                                  font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px; }
+    .modal-header .modal-close:hover { color: var(--text); }
+    .modal-body { overflow-y: auto; padding: 18px 22px; }
+    .inj-athlete { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .inj-athlete:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+    .inj-athlete-name { font-size: 15px; font-weight: 700; margin-bottom: 10px; display: flex;
+                        align-items: center; gap: 10px; }
+    .inj-row { display: flex; gap: 8px; font-size: 13px; padding: 4px 0; }
+    .inj-label { color: var(--muted); min-width: 170px; flex-shrink: 0; }
+    .inj-value { color: var(--text); }
+    .card.flag.clickable { cursor: pointer; transition: background .15s; }
+    .card.flag.clickable:hover { background: #222536; }
+    .modal-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 24px 0; }
   </style>
 </head>
 <body>
+
+<!-- INJURY REPORT MODAL -->
+<div id="injury-modal" class="modal-overlay" onclick="closeInjuryModal(event)">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="injury-modal-title">Injury Report</h2>
+      <button class="modal-close" onclick="closeInjuryModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="injury-modal-body"></div>
+  </div>
+</div>
 
 <div id="loading">
   <div class="spinner"></div>
@@ -813,7 +849,7 @@ function renderTeam() {
   document.getElementById('summary-cards').innerHTML = `
     <div class="card"><div class="label">Athletes</div><div class="value">${list.length}</div><div class="sub">in dataset</div></div>
     <div class="card"><div class="label">Avg ACWR</div><div class="value">${avgACWR}</div><div class="sub">latest week</div></div>
-    <div class="card flag"><div class="label">Injury Flags</div><div class="value">${flagged}</div><div class="sub">athletes this week</div></div>
+    <div class="card flag clickable" onclick="showInjuryReport()"><div class="label">Injury Flags</div><div class="value">${flagged}</div><div class="sub">athletes this week · click for report</div></div>
     <div class="card flag"><div class="label">Missing Reports</div><div class="value">${missing}</div><div class="sub">no recent submission</div></div>
   `;
 
@@ -1397,6 +1433,53 @@ async function loadData() {
 }
 
 function refreshData() { loadData(); }
+
+// ============================================================
+//  INJURY REPORT MODAL
+// ============================================================
+
+function showInjuryReport() {
+  const flagged = Object.values(ATHLETES).filter(a => a.hasFlag);
+  const modal   = document.getElementById('injury-modal');
+  const body    = document.getElementById('injury-modal-body');
+  const title   = document.getElementById('injury-modal-title');
+
+  const currentWk = getMondayOfWeek(new Date());
+  title.textContent = `Injury Report — Week of ${fmtDate(currentWk)}`;
+
+  if (!flagged.length) {
+    body.innerHTML = '<p class="modal-empty">No injury flags reported this week.</p>';
+  } else {
+    body.innerHTML = flagged
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map(a => {
+        const q = a.latestQWk ? a.weeks[a.latestQWk]?.q : null;
+        const row = (label, val) => val
+          ? `<div class="inj-row"><span class="inj-label">${label}</span><span class="inj-value">${val}</span></div>`
+          : '';
+        return `
+          <div class="inj-athlete">
+            <div class="inj-athlete-name">
+              ${a.displayName}
+              <span class="badge badge-${a.latestPart.toLowerCase().includes('reduced') ? 'red' : 'yellow'}">${participationShort(a.latestPart)}</span>
+            </div>
+            ${row('Training modification', q?.mod)}
+            ${row('Performance affected', q?.perf)}
+            ${row('Pain / symptoms', q?.pain)}
+            ${row('Injury occurred', q?.injWhen)}
+            ${row('Notes', q?.notes)}
+          </div>`;
+      }).join('');
+  }
+
+  modal.classList.add('open');
+}
+
+function closeInjuryModal(event) {
+  // Close when clicking the overlay background, close button, or called directly
+  if (event && event.target !== document.getElementById('injury-modal')) return;
+  document.getElementById('injury-modal').classList.remove('open');
+}
 
 // Auto-refresh
 if (CONFIG.REFRESH_MINUTES > 0) {
