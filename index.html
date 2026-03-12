@@ -809,9 +809,11 @@ function buildProfiles() {
 
     const curACWR = weeks[currentWk]?.acwr ?? weeks[latestHRWk]?.acwr ?? null;
     const curMEPs = hrWks[currentWk]?.meps ?? hrWks[latestHRWk]?.meps ?? 0;
-    const curMissedLoad = calcMissedLoad(qWks[currentWk]?.missed || []);
+    // Use current week Q data if available, fall back to previous week (athletes often submit end-of-week)
+    const curQWk = qWks[currentWk] ? currentWk : (qWks[prevWk] ? prevWk : null);
+    const curMissedLoad = calcMissedLoad(curQWk ? (qWks[curQWk]?.missed || []) : []);
     const curMinutes = (hrWks[currentWk]?.minutes ?? hrWks[latestHRWk]?.minutes ?? 0) + (curMissedLoad?.minutes || 0);
-    const curSessions = (hrWks[currentWk]?.count ?? hrWks[latestHRWk]?.count ?? 0) + (qWks[currentWk]?.missed?.length || 0);
+    const curSessions = (hrWks[currentWk]?.count ?? hrWks[latestHRWk]?.count ?? 0) + (curQWk ? (qWks[curQWk]?.missed?.length || 0) : 0);
     const latestQ = latestQWk ? qWks[latestQWk] : null;
     const hasQData = Object.keys(qWks).length > 0;
     const hasCurrentReport = !!(qWks[currentWk] || qWks[prevWk]);
