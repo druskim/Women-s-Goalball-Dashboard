@@ -586,6 +586,7 @@ const SESSION_TYPE_MAP = {
   'M': 'Stretching & Mobility',
   'H': 'High Intensity Interval Training',
   'N': 'Anaerobic Conditioning',
+  'R': 'Recovery Workout',
 };
 
 // A part is treated as a code only if the letter stands alone:
@@ -600,6 +601,7 @@ const SESSION_KEYWORDS = [
   [/^goalball\b/i,  'Goalball Practice'],
   [/^weight/i,      'Weights'],
   [/^workout/i,     'Weights'],
+  [/^recover/i,     'Recovery Workout'],
 ];
 
 function keywordMatch(part) {
