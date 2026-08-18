@@ -272,6 +272,17 @@
   <button onclick="showTab('compare', this)">Compare Athletes</button>
 </nav>
 
+<div id="date-filter-bar" style="background:var(--card);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+  <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Date Range</span>
+  <input type="date" id="filter-start" onchange="applyDateFilter()"
+         style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:13px;color-scheme:dark">
+  <span style="color:var(--muted);font-size:12px">to</span>
+  <input type="date" id="filter-end" onchange="applyDateFilter()"
+         style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:13px;color-scheme:dark">
+  <button onclick="clearDateFilter()" style="background:rgba(255,255,255,.08);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px">Clear</button>
+  <span id="filter-status" style="font-size:12px;color:var(--muted);margin-left:4px">Showing all data</span>
+</div>
+
 <main>
 
   <!-- ===== TEAM OVERVIEW ===== -->
@@ -285,8 +296,8 @@
           <tr>
             <th onclick="sortTable('name')">Athlete</th>
             <th onclick="sortTable('acwr')">ACWR</th>
-            <th onclick="sortTable('hours')">Time Trained (7d)</th>
-            <th onclick="sortTable('sessions')">Sessions (7d)</th>
+            <th onclick="sortTable('hours')" id="th-hours">Time Trained (7d)</th>
+            <th onclick="sortTable('sessions')" id="th-sessions">Sessions (7d)</th>
             <th onclick="sortTable('wellbeing')">Wellbeing</th>
             <th onclick="sortTable('participation')">Participation</th>
             <th onclick="sortTable('submitted')">Last Report</th>
@@ -440,6 +451,11 @@
 // ============================================================
 const ATHLETE_PARAM = new URLSearchParams(window.location.search).get('athlete');
 const DEMO_MODE     = new URLSearchParams(window.location.search).get('demo') === 'true';
+
+// Date range filter — null/null means "show everything" (default)
+let FILTER_START  = null;
+let FILTER_END    = null;
+let EARLIEST_WEEK = null;
 
 // ============================================================
 //  DARK THEME — Chart.js global defaults
@@ -972,6 +988,126 @@ function buildProfiles() {
 }
 
 // ============================================================
+//  DATE RANGE FILTER
+// ============================================================
+
+function isFilterActive() { return !!(FILTER_START || FILTER_END); }
+
+// Restrict an athlete's own week keys (weeks they have data for) to the active filter range.
+function filteredWeekList(weekList) {
+  if (!isFilterActive()) return weekList;
+  const startWk = FILTER_START ? getMondayOfWeek(FILTER_START) : null;
+  const endWk   = FILTER_END   ? getMondayOfWeek(FILTER_END)   : null;
+  return weekList.filter(wk => (!startWk || wk >= startWk) && (!endWk || wk <= endWk));
+}
+
+// Continuous list of Monday week-keys between two dates (inclusive) — used to build chart x-axes.
+function weekRangeKeys(startDate, endDate) {
+  const startWk = getMondayOfWeek(startDate);
+  const endWk   = getMondayOfWeek(endDate);
+  if (!startWk || !endWk) return [];
+  const keys = [];
+  let cur = startWk;
+  let guard = 0;
+  while (cur <= endWk && guard < 520) { // guard: ~10yr cap against bad input
+    keys.push(cur);
+    cur = addWeeks(cur, 1);
+    guard++;
+  }
+  return keys;
+}
+
+// Aggregate an athlete's stats over a set of their own week keys (used when a date filter is active).
+function computeRangeStats(a, weekKeys) {
+  let minutes = 0, sessions = 0, latestQWk = null, lastDataWk = null;
+  for (const wk of weekKeys) {
+    const w = a.weeks[wk];
+    if (!w) continue;
+    const missedLoad = calcMissedLoad(w.q?.missed || []);
+    const merged = mergeWithMissed(w.hr, missedLoad);
+    if (merged) {
+      minutes  += merged.minutes || 0;
+      sessions += (w.hr?.count || 0) + (w.q?.missed?.length || 0);
+    }
+    if (w.hr || w.q) lastDataWk = wk;
+    if (w.q) latestQWk = wk;
+  }
+  const acwr = lastDataWk ? (a.weeks[lastDataWk]?.acwr ?? null) : null;
+  const latestQ = latestQWk ? a.weeks[latestQWk].q : null;
+  return {
+    acwr, minutes, sessions, latestQWk,
+    latestWB: latestQ?.wellbeing || null,
+    latestPart: latestQ?.participation || '',
+    hasFlag: latestQ?.hasFlag || false,
+    hasQData: weekKeys.some(wk => a.weeks[wk]?.q),
+    hasCurrentReport: !!latestQWk,
+    latestQ,
+  };
+}
+
+// Single source of truth for "current" display stats — respects the active date filter.
+function getDisplayStats(a) {
+  if (!isFilterActive()) {
+    return {
+      acwr: a.curACWR, minutes: a.curMinutes, sessions: a.curSessions,
+      latestWB: a.latestWB, latestPart: a.latestPart, hasFlag: a.hasFlag,
+      hasQData: a.hasQData, hasCurrentReport: a.hasCurrentReport, latestQWk: a.latestQWk,
+      latestQ: a.latestQWk ? a.weeks[a.latestQWk]?.q : null,
+    };
+  }
+  return computeRangeStats(a, filteredWeekList(a.weekList));
+}
+
+function applyDateFilter() {
+  FILTER_START = document.getElementById('filter-start').value || null;
+  FILTER_END   = document.getElementById('filter-end').value   || null;
+  onFilterChanged();
+}
+
+function clearDateFilter() {
+  FILTER_START = null;
+  FILTER_END   = null;
+  document.getElementById('filter-start').value = '';
+  document.getElementById('filter-end').value   = '';
+  onFilterChanged();
+}
+
+function updateFilterStatus() {
+  const el = document.getElementById('filter-status');
+  if (!isFilterActive()) { el.textContent = 'Showing all data'; return; }
+  const s = FILTER_START ? fmtDate(getMondayOfWeek(FILTER_START)) : 'earliest data';
+  const e = FILTER_END   ? fmtDate(getMondayOfWeek(FILTER_END))   : 'latest data';
+  el.textContent = `Filtering: ${s} – ${e}`;
+}
+
+function updateTeamTableHeaders() {
+  const hoursTh = document.getElementById('th-hours');
+  const sessTh  = document.getElementById('th-sessions');
+  if (hoursTh) hoursTh.textContent = isFilterActive() ? 'Time Trained (range)' : 'Time Trained (7d)';
+  if (sessTh)  sessTh.textContent  = isFilterActive() ? 'Sessions (range)'    : 'Sessions (7d)';
+}
+
+// The Compare tab's 4/8/12-week toggle is superseded by an active date filter — grey it out
+function updateCmpWindowToggleState() {
+  const active = isFilterActive();
+  document.querySelectorAll('#tab-compare .chart-toggle-bar .chart-toggle-btn').forEach(b => {
+    b.disabled      = active;
+    b.style.opacity = active ? '0.4' : '';
+    b.style.cursor  = active ? 'not-allowed' : '';
+  });
+}
+
+function onFilterChanged() {
+  updateFilterStatus();
+  updateTeamTableHeaders();
+  updateCmpWindowToggleState();
+  renderTeam();
+  const an = document.getElementById('athlete-select').value;
+  if (an) renderIndividual(an);
+  renderCompare();
+}
+
+// ============================================================
 //  DEMO MODE — replace display names with "Athlete N"
 // ============================================================
 
@@ -991,30 +1127,32 @@ let sortDir = 1;
 
 function renderTeam() {
   const list = Object.values(ATHLETES);
+  const statsMap = new Map(list.map(a => [a.an, getDisplayStats(a)]));
 
   // Summary cards
-  const flagged  = list.filter(a => a.hasFlag).length;
-  const missing  = list.filter(a => a.hasQData && !a.hasCurrentReport).length;
-  const acwrVals = list.map(a => a.curACWR).filter(v => v != null);
+  const flagged  = list.filter(a => statsMap.get(a.an).hasFlag).length;
+  const missing  = list.filter(a => { const s = statsMap.get(a.an); return s.hasQData && !s.hasCurrentReport; }).length;
+  const acwrVals = list.map(a => statsMap.get(a.an).acwr).filter(v => v != null);
   const avgACWR  = acwrVals.length ? (acwrVals.reduce((a,b)=>a+b,0)/acwrVals.length).toFixed(2) : '—';
+  const periodLabel = isFilterActive() ? 'selected range' : 'this week';
 
   document.getElementById('summary-cards').innerHTML = `
     <div class="card"><div class="label">Athletes</div><div class="value">${list.length}</div><div class="sub">in dataset</div></div>
     <div class="card"><div class="label">Avg ACWR</div><div class="value">${avgACWR}</div><div class="sub">latest week</div></div>
-    <div class="card flag clickable" onclick="showInjuryReport()"><div class="label">Injury Flags</div><div class="value">${flagged}</div><div class="sub">athletes this week · click for report</div></div>
+    <div class="card flag clickable" onclick="showInjuryReport()"><div class="label">Injury Flags</div><div class="value">${flagged}</div><div class="sub">athletes ${periodLabel} · click for report</div></div>
     <div class="card flag"><div class="label">Missing Reports</div><div class="value">${missing}</div><div class="sub">no recent submission</div></div>
   `;
 
   const sorted = [...list].sort((a, b) => {
+    const sa = statsMap.get(a.an), sb = statsMap.get(b.an);
     let av, bv;
     if (sortKey === 'name')          { av = a.displayName; bv = b.displayName; }
-    else if (sortKey === 'acwr')     { av = a.curACWR ?? -1; bv = b.curACWR ?? -1; }
-    else if (sortKey === 'meps')     { av = a.curMEPs; bv = b.curMEPs; }
-    else if (sortKey === 'hours')    { av = a.curMinutes; bv = b.curMinutes; }
-    else if (sortKey === 'sessions') { av = a.curSessions; bv = b.curSessions; }
-    else if (sortKey === 'wellbeing'){ av = wbComposite(a.latestWB) ?? -1; bv = wbComposite(b.latestWB) ?? -1; }
-    else if (sortKey === 'submitted'){ av = a.latestQWk || ''; bv = b.latestQWk || ''; }
-    else if (sortKey === 'participation') { av = a.latestPart; bv = b.latestPart; }
+    else if (sortKey === 'acwr')     { av = sa.acwr ?? -1; bv = sb.acwr ?? -1; }
+    else if (sortKey === 'hours')    { av = sa.minutes; bv = sb.minutes; }
+    else if (sortKey === 'sessions') { av = sa.sessions; bv = sb.sessions; }
+    else if (sortKey === 'wellbeing'){ av = wbComposite(sa.latestWB) ?? -1; bv = wbComposite(sb.latestWB) ?? -1; }
+    else if (sortKey === 'submitted'){ av = sa.latestQWk || ''; bv = sb.latestQWk || ''; }
+    else if (sortKey === 'participation') { av = sa.latestPart; bv = sb.latestPart; }
     if (av < bv) return -1 * sortDir;
     if (av > bv) return 1 * sortDir;
     return 0;
@@ -1022,33 +1160,33 @@ function renderTeam() {
 
   const tbody = document.getElementById('team-tbody');
   tbody.innerHTML = sorted.map(a => {
-    const wbComp = wbComposite(a.latestWB);
+    const s = statsMap.get(a.an);
     const wbPips = WB_KEYS.map((k, idx) => {
-      const v = a.latestWB?.[k];
+      const v = s.latestWB?.[k];
       if (v == null) return `<div class="wb-pip" style="background:#2a2d3a" title="${WB_LABELS[idx]}: N/A"></div>`;
       const disp = (k === 'stress') ? (6 - v) : v;
       const col = disp >= 4 ? '#1ea868' : disp >= 3 ? '#f1c40f' : disp >= 2 ? '#e06c00' : '#d93025';
       return `<div class="wb-pip" style="background:${col}" title="${WB_LABELS[idx]}: ${v}${k==='stress'?' (lower=better)':''}"></div>`;
     }).join('');
 
-    const partClass = participationClass(a.latestPart);
-    const partShort = participationShort(a.latestPart);
-    const reportBadge = a.hasCurrentReport
-      ? `<span class="badge badge-green">${fmtDate(a.latestQWk)}</span>`
-      : a.hasQData
+    const partClass = participationClass(s.latestPart);
+    const partShort = participationShort(s.latestPart);
+    const reportBadge = s.hasCurrentReport
+      ? `<span class="badge badge-green">${fmtDate(s.latestQWk)}</span>`
+      : s.hasQData
         ? `<span class="badge badge-red">Missing</span>`
         : `<span class="no-data">—</span>`;
 
-    const hrs = a.curMinutes > 0 ? (a.curMinutes / 60).toFixed(1) + ' h' : '<span class="no-data">—</span>';
-    const rawComment = a.weeks[a.latestQWk]?.q?.notes || '';
+    const hrs = s.minutes > 0 ? (s.minutes / 60).toFixed(1) + ' h' : '<span class="no-data">—</span>';
+    const rawComment = s.latestQ?.notes || '';
     const safeComment = rawComment.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const safeName = a.displayName.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
     return `<tr onclick="openAthlete('${a.an}')" style="cursor:pointer"
         data-tip-name="${safeName}" data-tip-comment="${safeComment}">
       <td class="athlete-name">${a.displayName}</td>
-      <td>${acwrBadge(a.curACWR)}</td>
+      <td>${acwrBadge(s.acwr)}</td>
       <td>${hrs}</td>
-      <td>${a.curSessions > 0 ? a.curSessions : '<span class="no-data">—</span>'}</td>
+      <td>${s.sessions > 0 ? s.sessions : '<span class="no-data">—</span>'}</td>
       <td><div class="wb-row">${wbPips}</div></td>
       <td><span class="${partClass}">${partShort}</span></td>
       <td>${reportBadge}</td>
@@ -1471,15 +1609,26 @@ function toggleWBMetric(btn, idx) {
 function renderIndividual(an) {
   if (!an || !ATHLETES[an]) return;
   const a = ATHLETES[an];
-  const weeks = CONFIG.TREND_WEEKS;
+  const s = getDisplayStats(a);
 
-  // Build 12-week window ending on current week
+  // Build the week window: trailing CONFIG.TREND_WEEKS ending on current week by default,
+  // or the full set of weeks covered by the active date filter.
+  let wkKeys;
+  if (isFilterActive()) {
+    const startD = FILTER_START || EARLIEST_WEEK || a.currentWk;
+    const endD   = FILTER_END   || a.currentWk;
+    wkKeys = weekRangeKeys(startD, endD);
+  } else {
+    const weeks = CONFIG.TREND_WEEKS;
+    wkKeys = [];
+    for (let w = weeks - 1; w >= 0; w--) wkKeys.push(addWeeks(a.currentWk, -w));
+  }
+
   const weekLabels = [];
   const hrWeekData = [];
   const acwrData   = [];
   const qWeekData  = [];
-  for (let w = weeks - 1; w >= 0; w--) {
-    const wk = addWeeks(a.currentWk, -w);
+  for (const wk of wkKeys) {
     weekLabels.push(fmtDate(wk));
     const hr         = a.weeks[wk]?.hr || null;
     const missedLoad = calcMissedLoad(a.weeks[wk]?.q?.missed || []);
@@ -1489,8 +1638,8 @@ function renderIndividual(an) {
   }
 
   // Stats row
-  const latestQ = a.latestQWk ? a.weeks[a.latestQWk]?.q : null;
-  const partCls = participationClass(a.latestPart);
+  const latestQ = s.latestQ;
+  const partCls = participationClass(s.latestPart);
 
   // Compute avg hours from the trend window, excluding the current (incomplete) week
   const weeksWithData = hrWeekData.slice(0, -1).filter(w => w && w.minutes > 0);
@@ -1498,7 +1647,7 @@ function renderIndividual(an) {
     ? weeksWithData.reduce((s, w) => s + w.minutes, 0) / weeksWithData.length : 0;
   hoursMode = 'week';
   const mergedCurMinutes = hrWeekData[hrWeekData.length - 1]?.minutes ?? 0;
-  _indHours = { curMinutes: mergedCurMinutes, curSessions: a.curSessions, avgMinutes, weeksWithData: weeksWithData.length };
+  _indHours = { curMinutes: mergedCurMinutes, curSessions: s.sessions, avgMinutes, weeksWithData: weeksWithData.length };
 
   document.getElementById('ind-stats').innerHTML = `
     <div class="stat-card">
@@ -1509,23 +1658,23 @@ function renderIndividual(an) {
           <button id="hours-btn-avg"  class="chart-toggle-btn"        onclick="setHoursMode('avg')"  style="padding:2px 8px;font-size:10px;border-radius:12px">Avg/Wk</button>
         </span>
       </div>
-      <div class="value" id="ind-hours-value">${a.curMinutes > 0 ? (a.curMinutes / 60).toFixed(1) + ' hrs' : '—'}</div>
-      <div class="sub"   id="ind-hours-sub">${a.curSessions} session${a.curSessions !== 1?'s':''}</div>
+      <div class="value" id="ind-hours-value">${s.minutes > 0 ? (s.minutes / 60).toFixed(1) + ' hrs' : '—'}</div>
+      <div class="sub"   id="ind-hours-sub">${s.sessions} session${s.sessions !== 1?'s':''}</div>
     </div>
     <div class="stat-card">
       <div class="label">ACWR</div>
-      <div class="value" style="color:${acwrColor(a.curACWR)}">${a.curACWR != null ? a.curACWR.toFixed(2) : '—'}</div>
+      <div class="value" style="color:${acwrColor(s.acwr)}">${s.acwr != null ? s.acwr.toFixed(2) : '—'}</div>
       <div class="sub">acute : chronic</div>
     </div>
     <div class="stat-card">
       <div class="label">Last Report</div>
-      <div class="value" style="font-size:18px">${a.latestQWk ? fmtDate(a.latestQWk) : '—'}</div>
-      <div class="sub">${a.hasCurrentReport ? 'Up to date' : 'Missing this week'}</div>
+      <div class="value" style="font-size:18px">${s.latestQWk ? fmtDate(s.latestQWk) : '—'}</div>
+      <div class="sub">${s.hasCurrentReport ? (isFilterActive() ? 'Reported in range' : 'Up to date') : (isFilterActive() ? 'No report in range' : 'Missing this week')}</div>
     </div>
     <div class="stat-card">
       <div class="label">Participation</div>
-      <div class="value ${partCls}" style="font-size:15px;line-height:1.3">${participationShort(a.latestPart) || '—'}</div>
-      <div class="sub">${a.hasFlag ? 'Injury/illness flag' : ''}&nbsp;</div>
+      <div class="value ${partCls}" style="font-size:15px;line-height:1.3">${participationShort(s.latestPart) || '—'}</div>
+      <div class="sub">${s.hasFlag ? 'Injury/illness flag' : ''}&nbsp;</div>
     </div>
   `;
 
@@ -1606,7 +1755,7 @@ function renderIndividual(an) {
   // Notes
   const notesCard = document.getElementById('ind-notes');
   const notes = latestQ?.notes;
-  notesCard.innerHTML = `<h3>Latest Notes (${a.latestQWk ? fmtDate(a.latestQWk) : '—'})</h3>
+  notesCard.innerHTML = `<h3>Latest Notes (${s.latestQWk ? fmtDate(s.latestQWk) : '—'})</h3>
     ${notes ? `<div class="notes-text">${notes}</div>` : '<p class="empty-state">No notes submitted</p>'}`;
 }
 
@@ -1649,6 +1798,14 @@ async function loadData() {
     Q_DATA  = processQuestionnaire(qRows);
     ATHLETES = buildProfiles();
     if (DEMO_MODE) anonymizeAthletes();
+
+    EARLIEST_WEEK = Object.values(ATHLETES).reduce((min, a) => {
+      if (!a.weekList.length) return min;
+      return (!min || a.weekList[0] < min) ? a.weekList[0] : min;
+    }, null);
+    updateFilterStatus();
+    updateTeamTableHeaders();
+    updateCmpWindowToggleState();
 
     // Populate compare tab
     initCmpChips();
@@ -1713,21 +1870,28 @@ function copyAthleteLink() {
 // ============================================================
 
 function showInjuryReport() {
-  const flagged = Object.values(ATHLETES).filter(a => a.hasFlag && a.hasCurrentReport);
-  const modal   = document.getElementById('injury-modal');
-  const body    = document.getElementById('injury-modal-body');
-  const title   = document.getElementById('injury-modal-title');
+  const statsList = Object.values(ATHLETES).map(a => ({ a, s: getDisplayStats(a) }));
+  const flagged   = statsList.filter(({ s }) => s.hasFlag && s.hasCurrentReport);
+  const modal     = document.getElementById('injury-modal');
+  const body      = document.getElementById('injury-modal-body');
+  const title     = document.getElementById('injury-modal-title');
 
-  const currentWk = getMondayOfWeek(new Date());
-  title.textContent = `Injury Report — Week of ${fmtDate(currentWk)}`;
+  if (isFilterActive()) {
+    const startLbl = FILTER_START ? fmtDate(getMondayOfWeek(FILTER_START)) : 'earliest data';
+    const endLbl   = FILTER_END   ? fmtDate(getMondayOfWeek(FILTER_END))   : 'latest data';
+    title.textContent = `Injury Report — ${startLbl} – ${endLbl}`;
+  } else {
+    const currentWk = getMondayOfWeek(new Date());
+    title.textContent = `Injury Report — Week of ${fmtDate(currentWk)}`;
+  }
 
   if (!flagged.length) {
-    body.innerHTML = '<p class="modal-empty">No injury flags reported this week.</p>';
+    body.innerHTML = `<p class="modal-empty">No injury flags reported ${isFilterActive() ? 'in this range' : 'this week'}.</p>`;
   } else {
     body.innerHTML = flagged
-      .sort((a, b) => a.displayName.localeCompare(b.displayName))
-      .map(a => {
-        const q = a.latestQWk ? a.weeks[a.latestQWk]?.q : null;
+      .sort((x, y) => x.a.displayName.localeCompare(y.a.displayName))
+      .map(({ a, s }) => {
+        const q = s.latestQ;
         const row = (label, val) => val
           ? `<div class="inj-row"><span class="inj-label">${label}</span><span class="inj-value">${val}</span></div>`
           : '';
@@ -1735,7 +1899,7 @@ function showInjuryReport() {
           <div class="inj-athlete">
             <div class="inj-athlete-name">
               ${a.displayName}
-              <span class="badge badge-${a.latestPart.toLowerCase().includes('reduced') ? 'red' : 'yellow'}">${participationShort(a.latestPart)}</span>
+              <span class="badge badge-${s.latestPart.toLowerCase().includes('reduced') ? 'red' : 'yellow'}">${participationShort(s.latestPart)}</span>
             </div>
             ${row('Training modification', q?.mod)}
             ${row('Performance affected', q?.perf)}
@@ -1862,10 +2026,16 @@ function renderCompare() {
   }
 
   const currentWk = getMondayOfWeek(new Date());
-  _cmpWeekLabels = [];
-  for (let w = cmpWindow - 1; w >= 0; w--) {
-    _cmpWeekLabels.push(fmtDate(addWeeks(currentWk, -w)));
+  let wkKeys;
+  if (isFilterActive()) {
+    const startD = FILTER_START || EARLIEST_WEEK || currentWk;
+    const endD   = FILTER_END   || currentWk;
+    wkKeys = weekRangeKeys(startD, endD);
+  } else {
+    wkKeys = [];
+    for (let w = cmpWindow - 1; w >= 0; w--) wkKeys.push(addWeeks(currentWk, -w));
   }
+  _cmpWeekLabels = wkKeys.map(fmtDate);
 
   // The color index must match the full sorted list so colors stay stable as athletes are toggled
   _cmpAthleteData = athletes.map(a => {
@@ -1873,8 +2043,7 @@ function renderCompare() {
     const color = CMP_COLORS[colorIdx % CMP_COLORS.length];
     const weeks = [];
     const acwr  = [];
-    for (let w = cmpWindow - 1; w >= 0; w--) {
-      const wk = addWeeks(currentWk, -w);
+    for (const wk of wkKeys) {
       const hr = a.weeks[wk]?.hr || null;
       const missedLoad = calcMissedLoad(a.weeks[wk]?.q?.missed || []);
       weeks.push(mergeWithMissed(hr, missedLoad));
@@ -2001,10 +2170,11 @@ function makeCmpRadarChart() {
   const emptyEl = document.getElementById('cmp-radar-empty');
   const canvas  = document.getElementById('cmp-chart-radar');
   const datasets = _cmpAthleteData
-    .filter(({ a }) => a.latestWB && WB_KEYS.some(k => a.latestWB[k] != null))
-    .map(({ a, color }) => ({
+    .map(({ a, color }) => ({ a, color, wb: getDisplayStats(a).latestWB }))
+    .filter(({ wb }) => wb && WB_KEYS.some(k => wb[k] != null))
+    .map(({ a, color, wb }) => ({
       label: a.displayName,
-      data: WB_KEYS.map(k => a.latestWB[k] ?? null),
+      data: WB_KEYS.map(k => wb[k] ?? null),
       backgroundColor: color + '22',
       borderColor: color,
       pointBackgroundColor: color,
